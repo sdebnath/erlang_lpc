@@ -1,0 +1,10 @@
+{application, lpc,
+
+ [{description, "Highly parallel local RPC-style pmap execution framework for Erlang"}
+ ,{vsn, "0.1.0"}
+ ,{registered, []}
+ ,{applications,
+    [kernel,stdlib]}
+ ,{env,[]}
+ ,{modules, []}
+ ]}.
