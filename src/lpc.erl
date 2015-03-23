@@ -32,7 +32,9 @@
 -module(lpc).
 
 %%% API Function Exports
--export([pmap/3]).
+-export([pmap/3,
+         async/3,
+         await/2]).
 
 %%% -------------------------------------------------------
 %%% API functions
@@ -40,24 +42,37 @@
 
 %% pmap/3
 %%
-%% Entry point for local parallel map execution.
-pmap({Mod, Fun}, Args, List) ->
-    parallel_eval(Mod, Fun, Args, List).
+%% API for local parallel map execution. This is a blocking call
+%% that will farm out the parallel work and wait for replies back
+%% from each worker. More or less, a wrapper around async/await.
+pmap({Mod, Fun}, Args, List)
+  when is_atom(Mod), is_atom(Fun), is_list(Args), is_list(List) ->
+    Keys = async({Mod, Fun}, Args, List),
+    await(Keys, infinity).
+
+%% async/3
+%%
+%% Fires off async work requests for every member of the list by
+%% calling map_eval. Returns a list of keys to be used to wait
+%% for and gather replies. The return value is opaque to the caller.
+async({Mod, Fun}, Args, List)
+  when is_atom(Mod), is_atom(Fun), is_list(Args), is_list(List) ->
+    map_eval(Mod, Fun, Args, List);
+async({Mod, Fun}, Args, Element) ->
+    async({Mod, Fun}, Args, [Element]).
+
+%% await/2
+%% Waits for replies in the order of the members of the keys list. async/3
+%% returns the list in reverse order, so processing it serially from the
+%% begining here gets us the responses in the proder order (i.e., the original
+%% list sent to async/3). Note, the value Keys is opaque to the caller.
+await(Keys, Timeout)
+  when is_list(Keys), is_integer(Timeout); Timeout == infinity ->
+    [wait_on_reply(K, Timeout) || K <- Keys].
 
 %%% -------------------------------------------------------
 %%% Private functions
 %%% -------------------------------------------------------
-
-%% parallel_eval/4
-%%
-%% Fires off async work requests for every member of the list by
-%% calling map_eval. Then awaits for their response in order of 
-%% the reverse of the original list resulting in list with responses
-%% in order of the original list.
-parallel_eval(Mod, Fun, Args, List)
-  when is_atom(Mod), is_atom(Fun), is_list(Args), is_list(List) ->
-    Keys = map_eval(Mod, Fun, Args, List),
-    [await(K, infinity) || K <- Keys].
 
 %% map_eval/4
 %%
@@ -66,13 +81,13 @@ parallel_eval(Mod, Fun, Args, List)
 map_eval(_M, _F, _A, []) ->
     [];
 map_eval(M, F, A, [E | Tail]) ->
-    [async(M, F, [E | A]) | map_eval(M, F, A, Tail)].
+    [send_msg(M, F, [E | A]) | map_eval(M, F, A, Tail)].
 
 %% async/3
 %%
 %% Spawn process for MFA which will execute and send a message
 %% back with the response. Caller can use await/2 to retrieve it
-async(Mod, Fun, Args) ->
+send_msg(Mod, Fun, Args) ->
     ReplyTo = self(),
     spawn_link(
         fun() ->
@@ -89,7 +104,7 @@ async(Mod, Fun, Args) ->
 %% await/2
 %%
 %% Waits for a message with a specific key.
-await(Key, Timeout) when is_pid(Key) ->
+wait_on_reply(Key, Timeout) when is_pid(Key) ->
     receive
         {Key, {promise_reply, R}} ->
             R

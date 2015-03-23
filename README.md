@@ -14,10 +14,26 @@ Usage
 
 ```erl-sh
 bar_fun(X, F) -> F(X).
-do_work() ->
+do_blocking_work() ->
+    % Blocking call to lpc:pmap/3
     lpc:pmap({foo_module, bar_fun},
              [fun(X) -> timer:sleep(100), X end],
              lists:seq(1, 10000)),
+
+do_async_work() ->
+    % Non-blocking call to async/3 to start the parallel work
+    Obj = lpc:async({foo_module, bar_fun},
+                    [fun(X) -> timer:sleep(100), X end],
+                    lists:seq(1, 10000)),
+
+    % Go take care of other things while the heavy workload is
+    % executed in parallel
+    timer:sleep(60),
+
+    % Intermediary task done, lets wait for the responses from
+    % the parallel work.
+    lpc:await(Obj, infinity),
+
 ```
 
 Build
